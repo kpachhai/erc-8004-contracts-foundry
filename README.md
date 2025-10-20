@@ -24,7 +24,17 @@ Build:
 forge build
 ```
 
-## Deployment
+Tip for complex code paths: enable via-IR and set a fixed solc in `foundry.toml` to avoid “stack too deep” and to help verification.
+
+```
+[profile.default]
+optimizer = true
+optimizer_runs = 200
+via_ir = true
+solc_version = "0.8.30"
+```
+
+## Deployment (single command)
 
 ### DeployImplementations.s.sol
 
@@ -37,6 +47,8 @@ This script deploys and initializes all three upgradeable registries in one comm
 - Deploys ValidationRegistryUpgradeable implementation
 - Deploys ERC1967Proxy for ValidationRegistry with initialize(address identityProxy)
 - Logs all proxy and implementation addresses and verifies versions
+
+It leverages a small on-chain batch deployer contract (`scripts/ERC8004BatchDeployer.sol`) so everything happens within a single transaction on Hedera, avoiding relay receipt stalls.
 
 Hedera Testnet (chainId 296) example:
 
@@ -62,7 +74,7 @@ ReputationRegistry Implementation: 0x...
 ValidationRegistry Implementation: 0x...
 ```
 
-Optionally export them for the verification step:
+Optionally export them for verification:
 
 ```bash
 export ID_PROXY=0x...
@@ -79,90 +91,68 @@ Notes for Hedera:
 - Use `--legacy` transactions and a fixed gas price (e.g., 470 gwei = `470000000000` wei) for best reliability.
 - If you change scripts/config, it’s safe to run `forge clean` before re-running.
 
-## Verifying Contracts (Hedera-friendly)
+## Verify (single command)
 
-We recommend Sourcify for Hedera networks. Make sure your build settings (optimizer, via_ir) in `foundry.toml` match those used during deployment.
-
-Chain IDs:
-
-- Hedera Mainnet: 295
-- Hedera Testnet: 296
-- Hedera Previewnet: 297
-
-### Verify Implementations (Sourcify)
+Run the helper script to verify all 3 implementations and 3 proxies on Hedera via Sourcify (HashScan’s verify server):
 
 ```bash
-# Identity implementation
-forge verify-contract \
-  --chain-id 296 \
-  --verifier sourcify \
-  --verifier-url "https://server-verify.hashscan.io/" \
-  "$ID_IMPL" \
-  src/IdentityRegistryUpgradeable.sol:IdentityRegistryUpgradeable
-
-# Reputation implementation
-forge verify-contract \
-  --chain-id 296 \
-  --verifier sourcify \
-  --verifier-url "https://server-verify.hashscan.io/" \
-  "$REP_IMPL" \
-  src/ReputationRegistryUpgradeable.sol:ReputationRegistryUpgradeable
-
-# Validation implementation
-forge verify-contract \
-  --chain-id 296 \
-  --verifier sourcify \
-  --verifier-url "https://server-verify.hashscan.io/" \
-  "$VAL_IMPL" \
-  src/ValidationRegistryUpgradeable.sol:ValidationRegistryUpgradeable
+# Make sure the six env vars are set (see above)
+./verify_all.sh
 ```
 
-### Prepare initializer calldata for proxies
+Defaults used by the script:
 
-- Identity initializer (no args): `initialize()`
-- Reputation initializer (address): `initialize(address identityProxy)`
-- Validation initializer (address): `initialize(address identityProxy)`
+- CHAIN_ID=296 (override with `export CHAIN_ID=295|296|297`)
+- VERIFIER_URL=https://server-verify.hashscan.io/
+- SOURCE_DIR=src
+
+### How verification works (under the hood)
+
+The script performs the following actions:
+
+1. Implementations (Sourcify)
 
 ```bash
-# Build init calldata including 4-byte selector
+forge verify-contract --chain-id $CHAIN_ID --verifier sourcify \
+  --verifier-url "$VERIFIER_URL" \
+  "$ID_IMPL"  $SOURCE_DIR/IdentityRegistryUpgradeable.sol:IdentityRegistryUpgradeable
+
+forge verify-contract --chain-id $CHAIN_ID --verifier sourcify \
+  --verifier-url "$VERIFIER_URL" \
+  "$REP_IMPL" $SOURCE_DIR/ReputationRegistryUpgradeable.sol:ReputationRegistryUpgradeable
+
+forge verify-contract --chain-id $CHAIN_ID --verifier sourcify \
+  --verifier-url "$VERIFIER_URL" \
+  "$VAL_IMPL" $SOURCE_DIR/ValidationRegistryUpgradeable.sol:ValidationRegistryUpgradeable
+```
+
+2. Proxies (constructor is `(address implementation, bytes initCalldata)`)
+
+```bash
 IDENTITY_INIT=$(cast calldata "initialize()")
 REPUTATION_INIT=$(cast calldata "initialize(address)" "$ID_PROXY")
 VALIDATION_INIT=$(cast calldata "initialize(address)" "$ID_PROXY")
+
+forge verify-contract --chain-id $CHAIN_ID --verifier sourcify \
+  --verifier-url "$VERIFIER_URL" \
+  "$ID_PROXY"  $SOURCE_DIR/ERC1967Proxy.sol:ERC1967Proxy \
+  --constructor-args $(cast abi-encode 'constructor(address,bytes)' "$ID_IMPL"  "$IDENTITY_INIT")
+
+forge verify-contract --chain-id $CHAIN_ID --verifier sourcify \
+  --verifier-url "$VERIFIER_URL" \
+  "$REP_PROXY" $SOURCE_DIR/ERC1967Proxy.sol:ERC1967Proxy \
+  --constructor-args $(cast abi-encode 'constructor(address,bytes)' "$REP_IMPL" "$REPUTATION_INIT")
+
+forge verify-contract --chain-id $CHAIN_ID --verifier sourcify \
+  --verifier-url "$VERIFIER_URL" \
+  "$VAL_PROXY" $SOURCE_DIR/ERC1967Proxy.sol:ERC1967Proxy \
+  --constructor-args $(cast abi-encode 'constructor(address,bytes)' "$VAL_IMPL" "$VALIDATION_INIT")
 ```
 
-### Verify Proxies (ERC1967Proxy via Sourcify)
+## What is ERC8004BatchDeployer.sol?
 
-Constructor signature: `(address implementation, bytes initCalldata)`
-
-```bash
-# Identity proxy
-forge verify-contract \
-  --chain-id 296 \
-  --verifier sourcify \
-  --verifier-url "https://server-verify.hashscan.io/" \
-  "$ID_PROXY" \
-  src/ERC1967Proxy.sol:ERC1967Proxy \
-  --constructor-args $(cast abi-encode "constructor(address,bytes)" "$ID_IMPL" "$IDENTITY_INIT")
-
-# Reputation proxy
-forge verify-contract \
-  --chain-id 296 \
-  --verifier sourcify \
-  --verifier-url "https://server-verify.hashscan.io/" \
-  "$REP_PROXY" \
-  src/ERC1967Proxy.sol:ERC1967Proxy \
-  --constructor-args $(cast abi-encode "constructor(address,bytes)" "$REP_IMPL" "$REPUTATION_INIT")
-
-# Validation proxy
-forge verify-contract \
-  --chain-id 296 \
-  --verifier sourcify \
-  --verifier-url "https://server-verify.hashscan.io/" \
-  "$VAL_PROXY" \
-  src/ERC1967Proxy.sol:ERC1967Proxy \
-  --constructor-args $(cast abi-encode "constructor(address,bytes)" "$VAL_IMPL" "$VALIDATION_INIT")
-```
+`ERC8004BatchDeployer.sol` is a tiny contract used by `DeployImplementations.s.sol` to perform all six creations (3 implementations + 3 proxies) and initializations inside a single transaction. This is especially useful on Hedera where receipt polling can stall if many txs are in-flight(Note that this issue won't be there in the near future as a fix is in progress at the relay level). The batch deployer exposes the deployed addresses via public getters so the script can read and print them immediately after deployment.
 
 ## License
 
-CC0 - Public Domain
+MIT
