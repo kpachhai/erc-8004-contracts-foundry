@@ -89,7 +89,6 @@ export VAL_IMPL=0x...
 Notes for Hedera:
 
 - Use `--legacy` transactions and a fixed gas price (e.g., 470 gwei = `470000000000` wei) for best reliability.
-- If you change scripts/config, it’s safe to run `forge clean` before re-running.
 
 ## Verify (single command)
 
