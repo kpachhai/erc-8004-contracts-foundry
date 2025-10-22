@@ -63,6 +63,12 @@ forge script script/DeployImplementations.s.sol:DeployImplementations \
   -vv
 ```
 
+Notes for Hedera:
+
+- Use `--legacy` transactions and a fixed gas price (e.g., 470 gwei = `470000000000` wei) for best reliability.
+
+## Verify (single command)
+
 After a successful run, copy the printed addresses:
 
 ```text
@@ -87,24 +93,12 @@ export REP_IMPL=0x...
 export VAL_IMPL=0x...
 ```
 
-Notes for Hedera:
-
-- Use `--legacy` transactions and a fixed gas price (e.g., 470 gwei = `470000000000` wei) for best reliability.
-
-## Verify (single command)
-
 Run the helper script to verify all 3 implementations and 3 proxies on Hedera via Sourcify (HashScan’s verify server):
 
 ```bash
 # Make sure the six env vars are set (see above)
 ./verify_all.sh
 ```
-
-Defaults used by the script:
-
-- CHAIN_ID=296 (override with `export CHAIN_ID=295|296|297`)
-- VERIFIER_URL=https://server-verify.hashscan.io/
-- SOURCE_DIR=src
 
 ### How verification works (under the hood)
 
