@@ -53,6 +53,7 @@ It leverages a small on-chain batch deployer contract (`scripts/ERC8004BatchDepl
 Hedera Testnet (chainId 296) example:
 
 ```bash
+source .env
 forge script script/DeployImplementations.s.sol:DeployImplementations \
   --rpc-url "$HEDERA_RPC_URL" \
   --broadcast \
